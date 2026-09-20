@@ -1,0 +1,110 @@
+name: Gorgi VPN
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "*/30 * * * *"
+
+jobs:
+  gorgi:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------
+      # Скачать репозиторий
+      # --------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------
+      # Запустить Gorgi fetcher
+      # --------------------------------------------------
+      - name: Fetch Gorgi configs
+        run: |
+          python3 gorgi_fetch.py \
+            --out gorgi_ready
+
+
+      # --------------------------------------------------
+      # Проверка результата
+      # --------------------------------------------------
+      - name: Show result
+        run: |
+          echo "================================"
+          echo "Gorgi configs"
+          echo "================================"
+
+          if [ -f gorgi_ready/links.txt ]; then
+            cat gorgi_ready/links.txt
+          else
+            echo "links.txt не найден"
+            exit 1
+          fi
+
+          echo
+          echo "================================"
+          echo "Количество конфигов"
+          echo "================================"
+
+          grep -c '^vless://' gorgi_ready/links.txt || true
+
+
+      # --------------------------------------------------
+      # Обновить Gist
+      # --------------------------------------------------
+      - name: Update Gist
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+
+        run: |
+
+          if [ -z "$GIST_TOKEN" ]; then
+            echo "Ошибка: GIST_TOKEN не задан"
+            exit 1
+          fi
+
+          if [ -z "$GIST_ID" ]; then
+            echo "Ошибка: GIST_ID не задан"
+            exit 1
+          fi
+
+          echo "Обновляем Gist..."
+
+          jq -n \
+            --rawfile content gorgi_ready/links.txt \
+            '{
+              files: {
+                "gorgi.txt": {
+                  content: $content
+                }
+              }
+            }' \
+            > gist.json
+
+          curl --fail-with-body -sS \
+            -X PATCH \
+            "https://api.github.com/gists/${GIST_ID}" \
+            -H "Authorization: Bearer ${GIST_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            --data-binary @gist.json
+
+          echo
+          echo "Gist успешно обновлён"
+
+
+      # --------------------------------------------------
+      # Сохранить результат как Artifact
+      # --------------------------------------------------
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: gorgi-ready
+          path: gorgi_ready/
+          if-no-files-found: error
